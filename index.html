@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Pollinator Biodiversity Capture</title>
+</head>
+<body>
+  <h2>Capture Pollinator Data</h2>
+
+  <!-- live camera -->
+  <video id="video" width="320" height="240" autoplay></video><br>
+  <button id="snap">Capture Photo & Upload</button><br><br>
+
+  <!-- preview of captured image -->
+  <canvas id="canvas" width="320" height="240"></canvas><br>
+  <p id="status"></p>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const context = canvas.getContext('2d');
+    const status = document.getElementById('status');
+
+    // ask for camera
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        video.srcObject = stream;
+      })
+      .catch(err => {
+        status.innerText = 'Camera error: ' + err;
+      });
+
+    document.getElementById('snap').addEventListener('click', () => {
+      // draw current frame from video to canvas (this also updates preview)
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL('image/jpeg');
+
+      // ask for GPS
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+
+        // send to your Apps Script endpoint
+        fetch('https://script.google.com/macros/s/AKfycbyEF_JKauzlVlkurZs1FAh6c7yzYn99C1uqhdiYnfAWQYJKUtvPFzlPBzqVZhbApVpY/exec', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            latitude: lat,
+            longitude: lon,
+            image: imageData
+          })
+        })
+        .then(response => response.text())
+        .then(text => {
+          status.innerText = 'Uploaded successfully: ' + text;
+        })
+        .catch(err => {
+          status.innerText = 'Fetch error: ' + err;
+        });
+
+      }, err => {
+        status.innerText = 'Location error: ' + err.message;
+      });
+    });
+  </script>
+</body>
+</html>
