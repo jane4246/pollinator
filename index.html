@@ -1,66 +1,178 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pollinator Biodiversity Capture</title>
+  <!-- Load Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Use Inter font globally */
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    /* Hide the video element initially until stream loads, but reserve space */
+    #video {
+      display: block;
+      margin: 0 auto;
+      border-radius: 12px;
+      object-fit: cover;
+    }
+    #canvas {
+      border: 2px solid #3b82f6;
+    }
+    /* Ensure elements are visible on small screens */
+    #video, #canvas {
+      width: 100%;
+      max-width: 320px;
+      height: auto;
+    }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'pollinator-blue': '#3b82f6',
+            'pollinator-green': '#10b981',
+          }
+        }
+      }
+    }
+  </script>
 </head>
-<body>
-  <h2>Capture Pollinator Data</h2>
+<body class="bg-gray-50 min-h-screen p-4 flex flex-col items-center">
 
-  <!-- live camera -->
-  <video id="video" width="320" height="240" autoplay></video><br>
-  <button id="snap">Capture Photo & Upload</button><br><br>
+  <div class="w-full max-w-sm bg-white p-6 shadow-2xl rounded-xl">
+    <h1 class="text-3xl font-extrabold text-gray-800 mb-6 text-center">
+      Pollinator Capture
+    </h1>
 
-  <!-- preview of captured image -->
-  <canvas id="canvas" width="320" height="240"></canvas><br>
-  <p id="status"></p>
+    <p id="status" class="text-gray-600 mb-4 text-center">Initializing...</p>
+
+    <!-- live camera -->
+    <div class="relative w-full aspect-video mb-4 overflow-hidden rounded-lg shadow-lg">
+      <video id="video" width="320" height="240" autoplay class="rounded-lg"></video>
+      <!-- Preview of captured image -->
+      <canvas id="canvas" width="320" height="240" class="absolute top-0 left-0 hidden rounded-lg"></canvas>
+    </div>
+
+    <button id="snap" 
+            class="w-full py-3 px-4 bg-pollinator-green text-white font-bold rounded-lg shadow-md hover:bg-green-600 transition duration-150 ease-in-out transform hover:scale-[1.01] disabled:opacity-50"
+            disabled>
+      Capture Photo & Upload
+    </button>
+  </div>
 
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const context = canvas.getContext('2d');
-    const status = document.getElementById('status');
+    const statusText = document.getElementById('status');
+    const snapButton = document.getElementById('snap');
+    // NOTE: You must update this URL after deploying the Apps Script!
+    const endpointUrl = 'https://script.google.com/macros/s/AKfycbyEF_JKauzlVlkurZs1FAh6c7yzYn99C1uqhdiYnfAWQYJKUtvPFzlPBzqVZhbApVpY/exec'; // Your deployment URL
 
-    // ask for camera
+    // Function to update status message
+    function updateStatus(message, isError = false) {
+        statusText.innerText = message;
+        if (isError) {
+            statusText.className = 'text-red-500 mt-4 font-semibold text-center';
+        } else {
+            statusText.className = 'text-pollinator-blue mt-4 font-semibold text-center';
+        }
+    }
+    
+    // 1. Ask for camera access
     navigator.mediaDevices.getUserMedia({ video: true })
       .then(stream => {
         video.srcObject = stream;
+        video.style.display = 'block'; // Show video once stream is ready
+        snapButton.disabled = false; // Enable button
+        updateStatus('Camera ready. Click Capture to begin.');
       })
       .catch(err => {
-        status.innerText = 'Camera error: ' + err;
+        updateStatus('Camera access denied or device not found.', true);
+        snapButton.disabled = true;
       });
 
-    document.getElementById('snap').addEventListener('click', () => {
-      // draw current frame from video to canvas (this also updates preview)
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const imageData = canvas.toDataURL('image/jpeg');
+    // 2. Set up capture and upload handler
+    snapButton.addEventListener('click', () => {
+      snapButton.disabled = true;
+      updateStatus('Capturing image and requesting location...');
 
-      // ask for GPS
+      // Draw current frame from video to canvas
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = canvas.toDataURL('image/jpeg', 0.8); // 0.8 quality for smaller upload size
+      
+      video.style.display = 'none'; // Hide video
+      canvas.style.display = 'block'; // Show captured image
+
+      // 3. Ask for GPS location
       navigator.geolocation.getCurrentPosition(pos => {
         const lat = pos.coords.latitude;
         const lon = pos.coords.longitude;
+        updateStatus('Location found. Uploading data...');
 
-        // send to your Apps Script endpoint
-        fetch('https://script.google.com/macros/s/AKfycbyEF_JKauzlVlkurZs1FAh6c7yzYn99C1uqhdiYnfAWQYJKUtvPFzlPBzqVZhbApVpY/exec', {
+        // 4. Send data to Apps Script endpoint
+        fetch(endpointUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          // CRITICAL: We intentionally omit the Content-Type header to avoid CORS preflight (405 error)
           body: JSON.stringify({
             latitude: lat,
             longitude: lon,
             image: imageData
           })
         })
-        .then(response => response.text())
-        .then(text => {
-          status.innerText = 'Uploaded successfully: ' + text;
+        .then(async response => { 
+          // Check for HTTP errors (like 405 Method Not Allowed)
+          if (!response.ok) {
+            const errorBody = await response.text();
+            throw new Error(`HTTP Error: ${response.status} ${response.statusText}. Server response: ${errorBody.substring(0, 100)}...`);
+          }
+          
+          const responseText = await response.text();
+          
+          // HANDLE BOTH RAW TEXT "Success" (older deployment) AND JSON (correct deployment)
+          if (responseText.trim() === 'Success') {
+              return { status: "Success", message: "Data saved (URL not returned by server)." };
+          }
+
+          try {
+            return JSON.parse(responseText);
+          } catch (e) {
+            throw new Error(`Invalid JSON response. Raw output from server: ${responseText.substring(0, 200)}...`);
+          }
+        })
+        .then(data => {
+          if (data.status === 'Error') {
+            updateStatus('Upload Failed: ' + data.message, true);
+          } else {
+            // Display URL if available from the JSON response
+            const urlMessage = data.fileUrl ? `URL: ${data.fileUrl}` : data.message;
+            updateStatus(`Success! ${urlMessage}`, false);
+          }
+          snapButton.disabled = false;
+          // Revert preview back to video
+          canvas.style.display = 'none';
+          video.style.display = 'block';
         })
         .catch(err => {
-          status.innerText = 'Fetch error: ' + err;
+          updateStatus('Fatal Fetch Error: ' + err.message, true);
+          snapButton.disabled = false;
+          // Revert preview back to video
+          canvas.style.display = 'none';
+          video.style.display = 'block';
         });
 
       }, err => {
-        status.innerText = 'Location error: ' + err.message;
-      });
+        // Location error handler
+        updateStatus('Location Error: ' + err.message, true);
+        snapButton.disabled = false;
+        // Revert preview back to video
+        canvas.style.display = 'none';
+        video.style.display = 'block';
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }); 
     });
   </script>
 </body>
